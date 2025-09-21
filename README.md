@@ -8,13 +8,18 @@ The Wazuh NLP Translation API processes English queries like "Show me recent aut
 
 ## Features
 
-- **Natural Language Processing**: Convert English queries to Elasticsearch DSL
-- **Rule-Based Translation**: Uses Wazuh rule metadata for context-aware translation  
-- **Confidence Scoring**: Provides accuracy confidence for each translation
+- **Advanced Natural Language Processing**: Convert English queries to Elasticsearch DSL with fuzzy matching and typo tolerance
+- **Rule-Based Translation**: Uses Wazuh rule metadata for context-aware translation
+- **Intelligent Confidence Scoring**: Multi-factor confidence calculation with entity detection bonuses
 - **Query Validation**: Validates generated Elasticsearch queries for correctness
 - **Multiple Rule Types**: Supports authentication, system, security, SCA, and rootcheck rules
-- **Time Range Support**: Handles relative time expressions like "recent", "today", "last week"
-- **Severity Filtering**: Processes severity levels and ranges
+- **Enhanced Time Range Support**: Dynamic expressions like "last 3 hours", "within the past 2 days"
+- **Severity Filtering**: Processes severity levels with synonym support (urgent→critical, warn→medium)
+- **Field-Specific Queries**: IP addresses, ports, file paths, and agent/host filtering
+- **Boolean Logic Support**: AND/OR/NOT operators for complex query combinations
+- **Intelligent Suggestions**: Context-aware recommendations for improving low-confidence queries
+- **Fuzzy Matching**: Handles typos and variations in rule types and keywords
+- **Synonym Dictionaries**: Extensive synonym mapping for natural language flexibility
 - **Error Handling**: Comprehensive input validation and error responses
 
 ## Installation
@@ -127,7 +132,11 @@ Translates a natural language query into an Elasticsearch DSL query.
     "is_valid": true,
     "issues": [],
     "summary": {...}
-  }
+  },
+  "suggestions": [
+    "Consider adding a time range like 'recent', 'today', or 'last week'",
+    "You can filter by IP using phrases like 'from 10.0.0.5'"
+  ]
 }
 ```
 
@@ -289,20 +298,77 @@ curl -X POST http://127.0.0.1:5000/translate \
   }'
 ```
 
-### Time-Based Query
+### Time-Based Query with Dynamic Expressions
 
 **Request**:
 ```bash
 curl -X POST http://127.0.0.1:5000/translate \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "List system errors from yesterday",
+    "query": "List system errors from the last 3 hours",
     "rules": [
       {
         "id": 1003,
         "description": "Kernel error detected",
         "type": "system",
         "level": 12
+      }
+    ]
+  }'
+```
+
+### Field-Specific Query with IP and Port
+
+**Request**:
+```bash
+curl -X POST http://127.0.0.1:5000/translate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Show SSH connections from 192.168.1.100 on port 22",
+    "rules": [
+      {
+        "id": 5503,
+        "description": "SSH connection attempt",
+        "type": "authentication",
+        "level": 6
+      }
+    ]
+  }'
+```
+
+### Agent/Host Filtering Query
+
+**Request**:
+```bash
+curl -X POST http://127.0.0.1:5000/translate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Find authentication events from server web-01",
+    "rules": [
+      {
+        "id": 5503,
+        "description": "User login attempt",
+        "type": "authentication",
+        "level": 5
+      }
+    ]
+  }'
+```
+
+### Boolean Logic Query
+
+**Request**:
+```bash
+curl -X POST http://127.0.0.1:5000/translate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Show login AND failure NOT success",
+    "rules": [
+      {
+        "id": 5503,
+        "description": "User login failed",
+        "type": "authentication",
+        "level": 5
       }
     ]
   }'
@@ -331,6 +397,9 @@ curl -X POST http://127.0.0.1:5000/translate \
 - "yesterday" → previous 24-hour period
 - "last hour/day/week/month" → corresponding time range
 - "5 minutes ago", "2 hours ago" → specific relative time
+- "past 3 days", "last 2 weeks" → flexible dynamic ranges
+- **Fuzzy matching**: "recnt", "todya" → handles typos and variations
+- **Synonyms**: "now" → "recent", "current" → "today"
 
 **Severity Expressions**:
 - "critical", "severe", "urgent" → levels 12-15
@@ -338,6 +407,8 @@ curl -X POST http://127.0.0.1:5000/translate \
 - "medium", "moderate", "warning" → levels 4-6
 - "low", "minor", "info" → levels 1-3
 - "level > 8", "level 10" → specific level constraints
+- **Synonyms**: "urgent" → "critical", "serious" → "high", "minor" → "low"
+- **Fuzzy matching**: "critcal", "sevrity" → handles spelling variations
 
 **Rule Type Keywords**:
 - Authentication: "login", "auth", "authentication", "password", "user"
@@ -345,6 +416,23 @@ curl -X POST http://127.0.0.1:5000/translate \
 - Security: "security", "privilege", "escalation", "suspicious"
 - SCA: "configuration", "policy", "compliance", "benchmark"
 - Rootcheck: "rootkit", "suspicious", "binary", "suid"
+- **Fuzzy matching**: "autentication", "suspicius" → handles typos in rule types
+- **Context awareness**: Rule type inference from query context
+
+**Field-Specific Queries**:
+- **IP Addresses**: "from 192.168.1.100", "source IP 10.0.0.5", "destination 172.16.1.1"
+- **Ports**: "port 22", "on port 80", "destination port 443"
+- **Agents/Hosts**: "from server web-01", "agent database-server", "host mail-01"
+- **File Paths**: "file /etc/passwd", "path /var/log/auth.log", "directory /tmp"
+- **User Names**: "user admin", "username john", "account root"
+- **Process Names**: "process apache2", "service ssh", "daemon mysql"
+
+**Boolean Logic Support**:
+- **AND Operations**: "login AND failure", "ssh and error"
+- **OR Operations**: "critical OR high", "authentication or authorization"
+- **NOT Operations**: "login NOT success", "errors not warnings"
+- **Complex Expressions**: "(login OR ssh) AND (failure OR error) NOT success"
+- **Implicit Logic**: Natural language patterns automatically converted to boolean logic
 
 ### Confidence Scoring
 

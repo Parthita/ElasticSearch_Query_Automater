@@ -9,6 +9,7 @@ accurate queries with fallback handling for unrecognized input.
 
 import logging
 import re
+import difflib
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Set, Tuple
 from collections import defaultdict
@@ -24,12 +25,18 @@ logger = logging.getLogger(__name__)
 class TranslationResult:
     """Contains the result of NLP query translation."""
     success: bool
-    query: Dict[str, Any]
+    query: Dict[str, Any]  # The elasticsearch_query
     confidence: float
     validation_result: Optional[ValidationResult] = None
     fallback_used: bool = False
     detected_intent: Dict[str, Any] = None
     suggestions: List[str] = None
+    fallback_query: Optional[Dict[str, Any]] = None  # For backward compatibility
+    
+    @property
+    def elasticsearch_query(self) -> Dict[str, Any]:
+        """Alias for query field to maintain API compatibility."""
+        return self.query
     
     def __post_init__(self):
         if self.detected_intent is None:
@@ -48,10 +55,29 @@ class QueryIntent:
     time_range: Optional[Dict[str, str]]
     description_terms: List[str]
     confidence_scores: Dict[str, float]
+    # Enhanced entities
+    agents: List[str] = None
+    hosts: List[str] = None
+    ip_addresses: List[str] = None
+    ports: List[int] = None
+    file_paths: List[str] = None
+    boolean_logic: Dict[str, List[str]] = None  # must, should, must_not words
     
     def __post_init__(self):
         if not hasattr(self, 'confidence_scores') or self.confidence_scores is None:
             self.confidence_scores = {}
+        if self.agents is None:
+            self.agents = []
+        if self.hosts is None:
+            self.hosts = []
+        if self.ip_addresses is None:
+            self.ip_addresses = []
+        if self.ports is None:
+            self.ports = []
+        if self.file_paths is None:
+            self.file_paths = []
+        if self.boolean_logic is None:
+            self.boolean_logic = {"must": [], "should": [], "must_not": []}
 
 
 class NLPTranslator:
@@ -82,6 +108,11 @@ class NLPTranslator:
         self.time_patterns = {}
         self.keyword_patterns = {}
         
+        # Synonym dictionaries
+        self.severity_synonyms = {}
+        self.time_synonyms = {}
+        self.rule_type_synonyms = {}
+        
         # Confidence thresholds
         self.min_confidence = 0.3
         self.good_confidence = 0.7
@@ -97,7 +128,7 @@ class NLPTranslator:
             if isinstance(mapping, dict):
                 severity_mappings[name] = (mapping.get('min', 0), mapping.get('max', 15))
         
-        severity_keywords = self.config.get_severity_keywords()
+        severity_keywords = self.config.get_severity_keywords() or {}
         
         self.severity_patterns = {
             'mappings': severity_mappings,
@@ -110,6 +141,14 @@ class NLPTranslator:
                 (r'\blevel\s*([>=<]+)\s*(\d+)\b', 'level_constraint'),
                 (r'\blevel\s+(\d+)\b', 'exact_level'),
             ]
+        }
+        
+        # Severity synonyms (extendable via config)
+        self.severity_synonyms = {
+            'informational': 'low', 'info': 'low', 'minor': 'low', 'notice': 'low',
+            'warn': 'medium', 'warning': 'medium', 'moderate': 'medium',
+            'important': 'high', 'serious': 'high',
+            'urgent': 'critical', 'severe': 'critical', 'dangerous': 'critical', 'emergency': 'critical'
         }
         
         # Time patterns
@@ -125,19 +164,37 @@ class NLPTranslator:
             'this_month': {'duration': '30d', 'relative': 'now-30d'},
         }
         
+        # Time synonyms
+        self.time_synonyms = {
+            'now': 'recent', 'currently': 'recent', 'lately': 'recent',
+            'today': 'today', 'yday': 'yesterday', 'tonight': 'today'
+        }
+        
         # Common query patterns
         self.keyword_patterns = {
             'rule_id': r'\b(?:rule|id)\s*[:#]?\s*(\d+)\b',
-            'time_recent': r'\b(recent|recently|lately|now)\b',
+            'time_recent': r'\b(recent|recently|lately|now|currently)\b',
             'time_today': r'\b(today|current)\b',
             'time_yesterday': r'\byesterday\b',
-            'time_last': r'\blast\s+(hour|day|week|month|year)\b',
+            'time_last': r'\b(last|past|previous)\s+(hour|day|week|month|year|\d+\s+(minutes?|hours?|days?|weeks?|months?))\b',
             'time_this': r'\bthis\s+(hour|day|week|month|year)\b',
-            'time_range': r'\b(\d+)\s+(minutes?|hours?|days?|weeks?|months?)\s+ago\b',
+            'time_range': r'\b(\d+)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\s+ago\b',
+            'time_dynamic': r'\b(within\s+the?\s+last|in\s+the?\s+last|last|past|previous)\s+(\d+)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\b',
             'show_all': r'\b(show|list|find|get|display)\s+(all|everything)\b',
             'count': r'\b(count|number|total)\s+of\b',
             'top': r'\b(top|first|last)\s*(\d+)?\b',
+            'agent_from': r'\b(from|on|at)\s+(host|server|agent)?\s*([a-zA-Z0-9._-]+)\b',
+            'boolean_and': r'\bAND\b|\band\b|\+|&&',
+            'boolean_or': r'\bOR\b|\bor\b|\|\|',
+            'boolean_not': r'\bNOT\b|\bnot\b|\-|!'
         }
+        
+        # Rule type synonyms from config
+        self.rule_type_synonyms = {}
+        for rtype, tcfg in self.config.get('rule_types', {}).items():
+            if isinstance(tcfg, dict):
+                for syn in tcfg.get('aliases', []) + tcfg.get('keywords', []):
+                    self.rule_type_synonyms[syn.lower()] = rtype
     
     def initialize(self, rules: List[Any]) -> None:
         """
@@ -193,6 +250,9 @@ class NLPTranslator:
                 if not validation_result.is_valid:
                     self.logger.warning(f"Generated invalid query: {len(validation_result.errors)} errors")
             
+            # Generate suggestions
+            suggestions = self._generate_suggestions(intent, query, confidence)
+            
             # Handle low confidence with fallbacks
             if confidence < self.min_confidence:
                 fallback_query = self._generate_fallback_query(query, intent)
@@ -204,7 +264,8 @@ class NLPTranslator:
                         validation_result=validate_elasticsearch_query(fallback_query) if validate_output else None,
                         fallback_used=True,
                         detected_intent=intent.confidence_scores,
-                        suggestions=self._generate_suggestions(intent, query)
+                        suggestions=suggestions,
+                        fallback_query=fallback_query
                     )
             
             return TranslationResult(
@@ -214,7 +275,7 @@ class NLPTranslator:
                 validation_result=validation_result,
                 fallback_used=False,
                 detected_intent=intent.confidence_scores,
-                suggestions=self._generate_suggestions(intent, query) if confidence < self.good_confidence else []
+                suggestions=suggestions
             )
             
         except Exception as e:
@@ -227,15 +288,7 @@ class NLPTranslator:
             )
     
     def _parse_query_intent(self, query: str) -> QueryIntent:
-        """
-        Parse natural language query to extract intent.
-        
-        Args:
-            query: Natural language query
-            
-        Returns:
-            QueryIntent with extracted information
-        """
+        """Parse natural language query to extract intent and entities."""
         query_lower = query.lower().strip()
         confidence_scores = {}
         
@@ -255,7 +308,19 @@ class NLPTranslator:
         time_range, time_confidence = self._extract_time_range(query_lower)
         confidence_scores['time_range'] = time_confidence
         
-        # Extract keywords and description terms
+        # Agent/Host
+        agents, hosts, agent_conf = self._extract_agent_host(query_lower)
+        confidence_scores['agent_host'] = agent_conf
+        
+        # Boolean logic
+        boolean_logic, bool_conf = self._extract_boolean_logic(query_lower)
+        confidence_scores['boolean'] = bool_conf
+        
+        # Field-specifics
+        ips, ports, paths, fs_conf = self._extract_field_specifics(query_lower)
+        confidence_scores['fields'] = fs_conf
+        
+        # Keywords/Descriptions
         keywords, desc_terms, keyword_confidence = self._extract_keywords_and_descriptions(query_lower)
         confidence_scores['keywords'] = keyword_confidence
         
@@ -266,32 +331,52 @@ class NLPTranslator:
             keywords=keywords,
             time_range=time_range,
             description_terms=desc_terms,
-            confidence_scores=confidence_scores
+            confidence_scores=confidence_scores,
+            agents=agents,
+            hosts=hosts,
+            ip_addresses=ips,
+            ports=ports,
+            file_paths=paths,
+            boolean_logic=boolean_logic
         )
     
     def _extract_rule_types(self, query: str) -> Tuple[List[str], float]:
-        """Extract rule types from query."""
+        """Extract rule types from query with fuzzy and synonym matching."""
         rule_types = []
         type_scores = defaultdict(float)
         
         # Get rule type keywords from config
         rule_types_config = self.config.get('rule_types', {})
+        candidates = list(rule_types_config.keys())
         
+        # Tokenize query
+        words = re.findall(r'\b[\w.-]{3,}\b', query)
+        
+        # Direct and synonym matches
+        for word in words:
+            # Direct canonical match
+            if word in candidates:
+                type_scores[word] += 1.0
+                continue
+            # Synonym maps to canonical
+            if word in self.rule_type_synonyms:
+                canonical = self.rule_type_synonyms[word]
+                type_scores[canonical] += 0.8
+                continue
+            # Fuzzy match
+            close = difflib.get_close_matches(word, candidates, n=1, cutoff=0.85)
+            if close:
+                type_scores[close[0]] += 0.6
+        
+        # Keywords and aliases from config
         for rule_type, type_config in rule_types_config.items():
             if not isinstance(type_config, dict):
                 continue
-                
-            keywords = type_config.get('keywords', [])
-            aliases = type_config.get('aliases', [])
-            
-            # Score based on keyword matches
-            for keyword in keywords + aliases:
-                if keyword in query:
-                    # Exact word boundary match gets higher score
-                    if re.search(rf'\b{re.escape(keyword)}\b', query):
-                        type_scores[rule_type] += 1.0
-                    else:
-                        type_scores[rule_type] += 0.5
+            keywords = [k.lower() for k in type_config.get('keywords', [])]
+            aliases = [a.lower() for a in type_config.get('aliases', [])]
+            for token in words:
+                if re.search(rf'\b{re.escape(token)}\b', " ".join(keywords + aliases)):
+                    type_scores[rule_type] += 0.5
         
         # Select types with significant scores
         threshold = self.config.get('nlp.type_detection_threshold', 0.5)
@@ -302,27 +387,32 @@ class NLPTranslator:
         # Calculate confidence
         if type_scores:
             max_score = max(type_scores.values())
-            confidence = min(max_score / 2.0, 1.0)  # Normalize to 0-1
+            confidence = min(0.5 + min(max_score, 1.5) / 3.0, 1.0)  # Slight boost
         else:
             confidence = 0.0
         
         return rule_types, confidence
     
     def _extract_severity_levels(self, query: str) -> Tuple[int, int, float]:
-        """Extract severity level constraints."""
+        """Extract severity level constraints with synonyms and fuzzy matching."""
         min_level, max_level = 0, 15
         confidence = 0.0
         
+        # Normalize synonyms
+        q_norm = query
+        for syn, canonical in self.severity_synonyms.items():
+            q_norm = re.sub(rf'\b{re.escape(syn)}\b', canonical, q_norm)
+        
         # Check for named severity levels
         for severity_name, (sev_min, sev_max) in self.severity_patterns['mappings'].items():
-            if severity_name in query:
+            if re.search(rf'\b{re.escape(severity_name)}\b', q_norm):
                 min_level = max(min_level, sev_min)
                 max_level = min(max_level, sev_max)
-                confidence += 0.8
+                confidence += 0.6
         
-        # Check for severity keywords
+        # Check for severity keywords map
         for keyword, level in self.severity_patterns['keywords'].items():
-            if re.search(rf'\b{re.escape(keyword)}\b', query):
+            if re.search(rf'\b{re.escape(keyword)}\b', q_norm):
                 if 'high' in keyword or 'critical' in keyword:
                     min_level = max(min_level, level)
                 elif 'low' in keyword:
@@ -330,10 +420,27 @@ class NLPTranslator:
                 else:
                     min_level = max(min_level, level - 1)
                     max_level = min(max_level, level + 1)
-                confidence += 0.7
+                confidence += 0.5
         
-        # Check for explicit level constraints
-        level_matches = re.findall(r'\blevel\s*([>=<]+)\s*(\d+)\b', query)
+        # Fuzzy fallback for tokens near severity names
+        words = re.findall(r'\b\w{3,}\b', q_norm)
+        candidates = list(self.severity_patterns['mappings'].keys()) + list(self.severity_patterns['keywords'].keys())
+        for w in words:
+            close = difflib.get_close_matches(w, candidates, n=1, cutoff=0.87)
+            if close:
+                kw = close[0]
+                if kw in self.severity_patterns['mappings']:
+                    sev_min, sev_max = self.severity_patterns['mappings'][kw]
+                    min_level = max(min_level, sev_min)
+                    max_level = min(max_level, sev_max)
+                elif kw in self.severity_patterns['keywords']:
+                    level = self.severity_patterns['keywords'][kw]
+                    min_level = max(min_level, max(0, level - 1))
+                    max_level = min(max_level, min(15, level + 1))
+                confidence += 0.3
+        
+        # Explicit level constraints
+        level_matches = re.findall(r'\blevel\s*([>=<]+)\s*(\d+)\b', q_norm)
         for operator, level_str in level_matches:
             level = int(level_str)
             if '>=' in operator or '>' in operator:
@@ -342,21 +449,20 @@ class NLPTranslator:
                 max_level = min(max_level, level)
             confidence += 0.9
         
-        # Check for exact level
-        exact_matches = re.findall(r'\blevel\s+(\d+)\b', query)
+        # Exact level
+        exact_matches = re.findall(r'\blevel\s+(\d+)\b', q_norm)
         if exact_matches:
             level = int(exact_matches[0])
             min_level = max_level = level
-            confidence = 1.0
+            confidence = max(confidence, 0.95)
         
         return min_level, max_level, min(confidence, 1.0)
     
     def _extract_rule_ids(self, query: str) -> Tuple[List[int], float]:
         """Extract rule IDs from query."""
-        rule_ids = []
+        rule_ids: List[int] = []
         confidence = 0.0
         
-        # Look for explicit rule ID patterns
         id_matches = re.findall(self.keyword_patterns['rule_id'], query)
         for id_str in id_matches:
             try:
@@ -364,116 +470,220 @@ class NLPTranslator:
                 if rule_id in self.rules_by_id:
                     rule_ids.append(rule_id)
                     confidence = 1.0
+                else:
+                    # Accept unknown rule ids but lower confidence
+                    rule_ids.append(rule_id)
+                    confidence = max(confidence, 0.6)
             except ValueError:
                 continue
         
         return rule_ids, confidence
     
+    def _extract_agent_host(self, query: str) -> Tuple[List[str], List[str], float]:
+        """Extract agent/host names from query."""
+        agents = []
+        hosts = []
+        confidence = 0.0
+        
+        # Look for "from/on/at hostname" patterns
+        agent_matches = re.findall(self.keyword_patterns['agent_from'], query)
+        for match in agent_matches:
+            # match: ('from', 'server', 'server-01')
+            hostname = match[2] if len(match) > 2 else ''
+            if hostname:
+                # Determine if it looks more like agent or host
+                if 'agent' in match[1].lower():
+                    agents.append(hostname)
+                else:
+                    hosts.append(hostname)
+                confidence = 0.8
+        
+        return agents, hosts, confidence
+    
+    def _extract_boolean_logic(self, query: str) -> Tuple[Dict[str, List[str]], float]:
+        """Extract boolean logic operators and associated terms."""
+        logic = {"must": [], "should": [], "must_not": []}
+        confidence = 0.0
+        
+        # Split by AND/OR/NOT and classify terms
+        parts = re.split(r'\s+(AND|OR|NOT)\s+', query, flags=re.IGNORECASE)
+        current_op = "must"  # default
+        
+        for i, part in enumerate(parts):
+            part = part.strip()
+            if part.upper() == "AND":
+                current_op = "must"
+                confidence += 0.3
+            elif part.upper() == "OR":
+                current_op = "should" 
+                confidence += 0.3
+            elif part.upper() == "NOT":
+                current_op = "must_not"
+                confidence += 0.3
+            elif part and not part.upper() in ["AND", "OR", "NOT"]:
+                # Extract meaningful keywords from this part
+                words = re.findall(r'\b[\w.-]{3,}\b', part.lower())
+                for word in words:
+                    if word not in {'show', 'find', 'get', 'list', 'display', 'from', 'on', 'at'}:
+                        logic[current_op].append(word)
+        
+        return logic, min(confidence, 1.0)
+    
+    def _extract_field_specifics(self, query: str) -> Tuple[List[str], List[int], List[str], float]:
+        """Extract IP addresses, ports, and file paths from query."""
+        ips = []
+        ports = []
+        paths = []
+        confidence = 0.0
+        
+        # IP address patterns
+        ip_pattern = r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+        ip_matches = re.findall(ip_pattern, query)
+        for ip in ip_matches:
+            ips.append(ip)
+            confidence += 0.4
+        
+        # Port patterns (port 22, dst port 443, etc.)
+        port_pattern = r'\b(?:port|src\s*port|dst\s*port|source\s*port|dest\s*port)\s*(\d{1,5})\b'
+        port_matches = re.findall(port_pattern, query, re.IGNORECASE)
+        for port_str in port_matches:
+            try:
+                port = int(port_str)
+                if 1 <= port <= 65535:
+                    ports.append(port)
+                    confidence += 0.3
+            except ValueError:
+                continue
+        
+        # File path patterns (Unix and Windows)
+        path_patterns = [
+            r'/[\w\-./]+',  # Unix paths
+            r'[A-Z]:\\[\w\\.-]+',  # Windows paths
+            r'\\\\[\w\\.-]+',  # UNC paths
+        ]
+        
+        for pattern in path_patterns:
+            path_matches = re.findall(pattern, query)
+            for path in path_matches:
+                if len(path) > 3:  # Minimum meaningful path length
+                    paths.append(path)
+                    confidence += 0.2
+        
+        return ips, ports, paths, min(confidence, 1.0)
+    
     def _extract_time_range(self, query: str) -> Tuple[Optional[Dict[str, str]], float]:
-        """Extract time range from query."""
+        """Extract time range from query including dynamic expressions."""
         time_range = None
         confidence = 0.0
+        q = query
+        
+        # Normalize time synonyms
+        for syn, canonical in self.time_synonyms.items():
+            q = re.sub(rf'\b{re.escape(syn)}\b', canonical, q)
         
         # Check for predefined time patterns
         for pattern_name, pattern_config in self.time_patterns.items():
-            # Create regex patterns for each time expression
-            if pattern_name == 'recent' and re.search(self.keyword_patterns['time_recent'], query):
+            if pattern_name == 'recent' and re.search(self.keyword_patterns['time_recent'], q):
                 time_range = {'gte': pattern_config['relative']}
                 confidence = 0.8
                 break
-            elif pattern_name == 'today' and re.search(self.keyword_patterns['time_today'], query):
+            elif pattern_name == 'today' and re.search(self.keyword_patterns['time_today'], q):
                 time_range = {'gte': pattern_config['relative']}
                 confidence = 0.9
                 break
-            elif pattern_name.startswith('last_') and re.search(self.keyword_patterns['time_last'], query):
+            elif pattern_name.startswith('last_') and re.search(self.keyword_patterns['time_this'], q):
+                # "this week/month" etc.
                 time_range = {'gte': pattern_config['relative']}
-                confidence = 0.8
+                confidence = 0.6
                 break
         
-        # Check for "yesterday"
-        if re.search(self.keyword_patterns['time_yesterday'], query):
+        # Yesterday explicit
+        if re.search(self.keyword_patterns['time_yesterday'], q):
             time_range = {
                 'gte': self.time_patterns['yesterday']['relative'],
                 'lte': self.time_patterns['yesterday']['end']
             }
-            confidence = 0.9
+            confidence = max(confidence, 0.9)
         
-        # Check for relative time expressions like "5 minutes ago"
-        time_matches = re.findall(self.keyword_patterns['time_range'], query)
+        # Relative "X units ago"
+        time_matches = re.findall(self.keyword_patterns['time_range'], q)
         if time_matches:
             amount, unit = time_matches[0]
-            unit_map = {'minute': 'm', 'hour': 'h', 'day': 'd', 'week': 'w', 'month': 'M'}
-            unit_char = unit_map.get(unit.rstrip('s'), 'd')
+            unit_map = {'minute': 'm', 'minutes': 'm', 'mins': 'm', 'hour': 'h', 'hours': 'h', 'hrs': 'h', 'day': 'd', 'days': 'd', 'week': 'w', 'weeks': 'w', 'month': 'M', 'months': 'M'}
+            unit_char = unit_map.get(unit.rstrip('s'), unit_map.get(unit, 'd'))
             time_range = {'gte': f'now-{amount}{unit_char}'}
-            confidence = 0.8
+            confidence = max(confidence, 0.8)
         
-        return time_range, confidence
+        # Dynamic "last N units"
+        dyn = re.findall(self.keyword_patterns['time_dynamic'], q)
+        if dyn:
+            amount = dyn[0][1]
+            unit = dyn[0][2]
+            unit_map = {'minute': 'm', 'minutes': 'm', 'mins': 'm', 'hour': 'h', 'hours': 'h', 'hrs': 'h', 'day': 'd', 'days': 'd', 'week': 'w', 'weeks': 'w', 'month': 'M', 'months': 'M'}
+            unit_key = unit.lower()
+            unit_char = unit_map.get(unit_key, 'd')
+            time_range = {'gte': f'now-{amount}{unit_char}'}
+            confidence = max(confidence, 0.85)
+        
+        return time_range, min(confidence, 1.0)
     
     def _extract_keywords_and_descriptions(self, query: str) -> Tuple[List[str], List[str], float]:
-        """Extract keywords and description terms."""
-        # Get stop words from config
+        """Extract keywords and description terms with fuzzy tolerance."""
         stop_words = set(self.config.get_stop_words())
-        
-        # Extract all words
-        words = re.findall(r'\b\w{3,}\b', query.lower())
-        
-        # Filter out stop words and common query terms
-        query_terms = {'show', 'find', 'get', 'list', 'display', 'rule', 'rules', 'level', 'type'}
+        words = re.findall(r'\b[\w.-]{3,}\b', query.lower())
+        query_terms = {'show', 'find', 'get', 'list', 'display', 'rule', 'rules', 'level', 'type', 'from', 'on', 'at', 'with', 'and', 'or', 'not'}
         keywords = []
         description_terms = []
         
-        for word in words:
-            if word not in stop_words and word not in query_terms and not word.isdigit():
-                keywords.append(word)
-                
-                # Check if word appears in any rule descriptions
-                for rule in self.rules:
-                    if word in rule.description.lower():
-                        if word not in description_terms:
-                            description_terms.append(word)
-                        break
+        # Build a set of words from all rule descriptions for fuzzy lookup
+        rule_vocab = set()
+        for rule in self.rules:
+            rule_vocab.update(re.findall(r'\b[\w.-]{3,}\b', rule.description.lower()))
         
-        # Calculate confidence based on how many keywords match rule descriptions
+        for word in words:
+            if word in stop_words or word in query_terms or word.isdigit():
+                continue
+            keywords.append(word)
+            # Fuzzy match against rule description vocabulary
+            if word in rule_vocab:
+                description_terms.append(word)
+            else:
+                close = difflib.get_close_matches(word, list(rule_vocab), n=1, cutoff=0.9)
+                if close and close[0] not in description_terms:
+                    description_terms.append(close[0])
+        
+        confidence = 0.0
         if keywords:
             matching_keywords = len([k for k in keywords if k in description_terms])
-            confidence = matching_keywords / len(keywords)
-        else:
-            confidence = 0.0
+            confidence = (matching_keywords / len(keywords)) * 0.8 + (1 if matching_keywords >= 2 else 0) * 0.2
         
         return keywords, description_terms, confidence
     
     def _generate_elasticsearch_query(self, intent: QueryIntent) -> Dict[str, Any]:
         """
         Generate Elasticsearch DSL query from parsed intent.
-        
-        Args:
-            intent: Parsed query intent
-            
-        Returns:
-            Elasticsearch DSL query
         """
         query = {
             "query": {
                 "bool": {
                     "must": [],
-                    "filter": []
+                    "filter": [],
+                    "must_not": [],
+                    "should": []
                 }
             },
             "size": self.config.get('query_processing.default_results', 50)
         }
+        boolq = query["query"]["bool"]
         
-        # Add rule type filters
+        # Rule type filters
         if intent.rule_types:
             if len(intent.rule_types) == 1:
-                query["query"]["bool"]["filter"].append({
-                    "term": {"rule.groups": intent.rule_types[0]}
-                })
+                boolq["filter"].append({"term": {"rule.groups": intent.rule_types[0]}})
             else:
-                query["query"]["bool"]["filter"].append({
-                    "terms": {"rule.groups": intent.rule_types}
-                })
+                boolq["filter"].append({"terms": {"rule.groups": intent.rule_types}})
         
-        # Add severity level filters
+        # Severity
         min_level, max_level = intent.severity_levels
         if min_level > 0 or max_level < 15:
             range_filter = {}
@@ -481,99 +691,157 @@ class NLPTranslator:
                 range_filter["gte"] = min_level
             if max_level < 15:
                 range_filter["lte"] = max_level
-            
-            query["query"]["bool"]["filter"].append({
-                "range": {"rule.level": range_filter}
-            })
+            boolq["filter"].append({"range": {"rule.level": range_filter}})
         
-        # Add rule ID filters
+        # Rule IDs
         if intent.rule_ids:
             if len(intent.rule_ids) == 1:
-                query["query"]["bool"]["filter"].append({
-                    "term": {"rule.id": intent.rule_ids[0]}
-                })
+                boolq["filter"].append({"term": {"rule.id": intent.rule_ids[0]}})
             else:
-                query["query"]["bool"]["filter"].append({
-                    "terms": {"rule.id": intent.rule_ids}
-                })
+                boolq["filter"].append({"terms": {"rule.id": intent.rule_ids}})
         
-        # Add time range filter
+        # Time range
         if intent.time_range:
-            query["query"]["bool"]["filter"].append({
-                "range": {"@timestamp": intent.time_range}
-            })
+            boolq["filter"].append({"range": {"@timestamp": intent.time_range}})
         
-        # Add description/content search
+        # Agent/Host filters
+        for name in (intent.agents or []) + (intent.hosts or []):
+            # Prefer agent.name; also allow manager.name and location keyword match
+            boolq["filter"].append({"term": {"agent.name": name}})
+        
+        # Field-specific IP filters across common fields
+        if intent.ip_addresses:
+            ip_should = []
+            for ip in intent.ip_addresses:
+                for field in ["decoder.srcip", "decoder.dstip", "data.srcip", "data.dstip", "agent.ip"]:
+                    ip_should.append({"term": {field: ip}})
+            if ip_should:
+                boolq["should"].extend(ip_should)
+        
+        # Port filters
+        if intent.ports:
+            port_should = []
+            for port in intent.ports:
+                for field in ["decoder.srcport", "decoder.dstport", "data.srcport", "data.dstport"]:
+                    port_should.append({"term": {field: port}})
+            if port_should:
+                boolq["should"].extend(port_should)
+        
+        # File path queries as phrase match in full_log and commandLine
+        for path in intent.file_paths:
+            boolq["must"].append({"multi_match": {"query": path, "type": "phrase", "fields": ["full_log", "data.win.eventdata.commandLine"]}})
+        
+        # Description/content search
         if intent.description_terms:
             if len(intent.description_terms) == 1:
-                query["query"]["bool"]["must"].append({
-                    "match": {"rule.description": intent.description_terms[0]}
-                })
+                boolq["must"].append({"match": {"rule.description": intent.description_terms[0]}})
             else:
-                query["query"]["bool"]["must"].append({
+                boolq["must"].append({
                     "multi_match": {
                         "query": " ".join(intent.description_terms),
                         "fields": ["rule.description", "full_log"]
                     }
                 })
         
-        # If no specific constraints, add a match_all to ensure we get results
-        if (not query["query"]["bool"]["must"] and 
-            not query["query"]["bool"]["filter"]):
+        # Boolean logic terms
+        for term in intent.boolean_logic.get("must", []):
+            boolq["must"].append({"simple_query_string": {"query": term, "fields": ["rule.description", "full_log"]}})
+        for term in intent.boolean_logic.get("should", []):
+            boolq["should"].append({"simple_query_string": {"query": term, "fields": ["rule.description", "full_log"]}})
+        for term in intent.boolean_logic.get("must_not", []):
+            boolq["must_not"].append({"simple_query_string": {"query": term, "fields": ["rule.description", "full_log"]}})
+        
+        # If nothing specified, use match_all
+        if not any([boolq["must"], boolq["filter"], boolq["should"], boolq["must_not"]]):
             query["query"] = {"match_all": {}}
+        else:
+            # Prefer should minimum_should_match if we added shoulds
+            if boolq["should"]:
+                boolq["minimum_should_match"] = 1
         
-        # Add sorting by timestamp (newest first)
+        # Sort
         query["sort"] = [{"@timestamp": {"order": "desc"}}]
-        
         return query
     
     def _calculate_confidence(self, intent: QueryIntent, original_query: str) -> float:
-        """Calculate overall confidence score for the translation."""
+        """Calculate overall confidence score for the translation with multiple factors."""
         scores = list(intent.confidence_scores.values())
+        base = sum(scores) / len(scores) if scores else 0.0
         
-        if not scores:
-            return 0.0
+        # Entity presence boosts
+        if intent.rule_types:
+            base += 0.15
+        if intent.time_range:
+            base += 0.1
+        if intent.severity_levels != (0, 15):
+            base += 0.1
+        if intent.rule_ids:
+            base += 0.2
+        if intent.ip_addresses:
+            base += 0.15
+        if intent.ports:
+            base += 0.05
+        if intent.agents or intent.hosts:
+            base += 0.1
+        if intent.description_terms:
+            base += 0.05
         
-        # Weighted average with emphasis on higher scores
-        weights = [score + 0.1 for score in scores]  # Add small base weight
-        weighted_sum = sum(score * weight for score, weight in zip(scores, weights))
-        weight_sum = sum(weights)
+        # Boolean logic presence small boost
+        if any(intent.boolean_logic.values()):
+            base += 0.05
         
-        confidence = weighted_sum / weight_sum if weight_sum > 0 else 0.0
+        # Normalize and clamp
+        confidence = max(0.0, min(base, 1.0))
         
-        # Boost confidence if we have multiple types of matches
-        if len([s for s in scores if s > 0.5]) >= 2:
-            confidence += 0.1
+        # Multiple strong signals boost
+        strong = 0
+        strong += 1 if intent.rule_types else 0
+        strong += 1 if intent.time_range else 0
+        strong += 1 if intent.rule_ids else 0
+        if strong >= 2:
+            confidence = min(1.0, confidence + 0.1)
         
-        # Reduce confidence for very short queries
+        # Short query penalty
         if len(original_query.split()) < 3:
-            confidence *= 0.8
+            confidence *= 0.85
         
         return min(confidence, 1.0)
     
     def _generate_fallback_query(self, query: str, intent: QueryIntent) -> Optional[Dict[str, Any]]:
         """Generate a fallback query for low-confidence translations."""
+        # Prefer field-specific hints even in fallback
+        if intent.ip_addresses:
+            return {
+                "query": {
+                    "bool": {
+                        "should": [
+                            {"term": {"decoder.srcip": intent.ip_addresses[0]}},
+                            {"term": {"decoder.dstip": intent.ip_addresses[0]}},
+                            {"term": {"data.srcip": intent.ip_addresses[0]}},
+                            {"term": {"data.dstip": intent.ip_addresses[0]}}
+                        ],
+                        "minimum_should_match": 1
+                    }
+                },
+                "size": 30,
+                "sort": [{"@timestamp": {"order": "desc"}}]
+            }
+        
         # Simple keyword search across all fields
         keywords = intent.keywords or re.findall(r'\b\w{4,}\b', query.lower())
         
         if not keywords:
-            # Ultimate fallback - recent events
             return {
                 "query": {"match_all": {}},
-                "filter": {
-                    "range": {
-                        "@timestamp": {"gte": "now-1h"}
-                    }
-                },
+                "filter": {"range": {"@timestamp": {"gte": "now-1h"}}},
                 "size": 20,
                 "sort": [{"@timestamp": {"order": "desc"}}]
             }
         
-        # Search for keywords in rule descriptions and logs
         return {
             "query": {
                 "multi_match": {
-                    "query": " ".join(keywords[:3]),  # Limit to first 3 keywords
+                    "query": " ".join(keywords[:4]),
                     "fields": ["rule.description^2", "full_log"],
                     "type": "best_fields"
                 }
@@ -582,26 +850,42 @@ class NLPTranslator:
             "sort": [{"@timestamp": {"order": "desc"}}]
         }
     
-    def _generate_suggestions(self, intent: QueryIntent, original_query: str) -> List[str]:
+    def _generate_suggestions(self, intent: QueryIntent, original_query: str, confidence: float = 0.0) -> List[str]:
         """Generate suggestions for improving the query."""
         suggestions = []
         
-        # Suggest adding time constraints if none specified
+        # Base suggestions for common missing elements
         if not intent.time_range:
             suggestions.append("Consider adding a time range like 'recent', 'today', or 'last week'")
         
-        # Suggest being more specific about rule types
         if not intent.rule_types and intent.confidence_scores.get('rule_type', 0) < 0.5:
             available_types = list(self.config.get('rule_types', {}).keys())
-            suggestions.append(f"Try specifying a rule type: {', '.join(available_types[:3])}")
+            if available_types:
+                suggestions.append(f"Try specifying a rule type like: {', '.join(available_types[:3])}")
         
-        # Suggest severity levels
         if intent.severity_levels == (0, 15) and intent.confidence_scores.get('severity', 0) < 0.5:
-            suggestions.append("Add severity level like 'high', 'critical', 'medium', or 'low'")
+            suggestions.append("Add severity level such as 'high', 'critical', 'medium', or 'low'")
         
-        # Suggest more specific terms
         if len(intent.description_terms) == 0 and intent.keywords:
-            suggestions.append("Try using more specific terms related to security events")
+            suggestions.append("Use more specific terms related to the event description")
+        
+        # Advanced suggestions for low confidence queries
+        if confidence < self.good_confidence:
+            if intent.ip_addresses and len(intent.ip_addresses) > 1:
+                suggestions.append("Consider narrowing down to a single IP if possible")
+            
+            # Boolean guidance
+            if not any(intent.boolean_logic.values()) and len(intent.keywords) >= 3:
+                suggestions.append("Use boolean operators AND/OR/NOT to combine terms, e.g. 'login AND failure NOT success'")
+            
+            # Field-specific help for very low confidence
+            if confidence < self.min_confidence:
+                if not intent.ip_addresses:
+                    suggestions.append("You can filter by IP using phrases like 'from 10.0.0.5' or 'src ip 10.0.0.5'")
+                if not intent.ports:
+                    suggestions.append("You can specify ports, e.g. 'port 22' or 'dst port 443'")
+                if not intent.agents and not intent.hosts:
+                    suggestions.append("You can specify agents/hosts like 'from server-01' or 'on host web-server'")
         
         return suggestions
     
@@ -612,14 +896,16 @@ class NLPTranslator:
             "severity_levels": list(self.config.get('severity.mappings', {}).keys()),
             "time_expressions": [
                 "recent", "today", "yesterday", "last hour", "last day", 
-                "last week", "last month", "5 minutes ago", "2 hours ago"
+                "last week", "last month", "5 minutes ago", "2 hours ago",
+                "last 24 hours", "past 7 days"
             ],
             "example_queries": [
                 "Show me recent authentication failures",
                 "Find high severity web attacks from today", 
                 "List all firewall rules with level > 5",
                 "Get malware alerts from the last week",
-                "Show rule 5503 events from yesterday"
+                "Show rule 5503 events from yesterday",
+                "Events from server-01 in the last 2 hours"
             ]
         }
 
