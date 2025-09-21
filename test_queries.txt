@@ -1,0 +1,55 @@
+# Authentication queries
+Show me recent authentication failures
+Find all login failures from today
+List failed login attempts with high severity
+Get authentication events from the last hour
+Show successful login events
+
+# System queries  
+Find system errors from yesterday
+Show me kernel errors
+List all system events with level greater than 8
+Get service restart events
+Show high CPU usage alerts
+
+# Security queries
+Find privilege escalation attempts
+Show critical security events
+List suspicious process executions
+Get all security alerts from last week
+Show file permission changes
+
+# Configuration assessment queries
+Find CIS benchmark failures
+Show weak password policies
+List firewall configuration issues
+Get SSH configuration problems
+Show security configuration alerts
+
+# Rootcheck queries
+Find rootkit detections
+Show suspicious binaries
+List SUID file alerts
+Get critical rootcheck events
+Show hidden files detected
+
+# Mixed severity queries
+Show all critical alerts
+Find high severity events from today
+List medium priority security events
+Get low priority system events
+Show events with level 10 or higher
+
+# Time-based queries
+Show events from last 24 hours
+Find alerts from this morning
+List events from the past week
+Get recent critical alerts
+Show today's authentication events
+
+# Specific rule queries
+Show rule 5503 events
+Find events matching rule 4003
+List alerts from rule 2001
+Get rule 3001 occurrences
+Show multiple authentication failure events

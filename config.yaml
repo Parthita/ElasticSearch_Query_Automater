@@ -1,0 +1,319 @@
+# Wazuh NLP System Configuration
+# This file contains all configuration settings for the Wazuh log query NLP system
+
+# Application Settings
+app:
+  name: "Wazuh NLP Query System"
+  version: "1.0.0"
+  debug: false
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  max_query_length: 500
+  query_history_limit: 50
+
+# Severity Level Mappings
+severity:
+  # Map severity names to level ranges
+  mappings:
+    low:
+      min: 1
+      max: 3
+      description: "Low priority events, informational"
+    medium:
+      min: 4
+      max: 6
+      description: "Medium priority events, warnings"
+    high:
+      min: 7
+      max: 10
+      description: "High priority events, potential security issues"
+    critical:
+      min: 11
+      max: 15
+      description: "Critical security events requiring immediate attention"
+  
+  # Default severity level if not specified
+  default_min: 0
+  default_max: 15
+  
+  # Severity keywords and their minimum levels
+  keywords:
+    info: 1
+    informational: 1
+    notice: 3
+    low: 1
+    minor: 1
+    warning: 5
+    medium: 5
+    moderate: 5
+    important: 5
+    high: 7
+    serious: 8
+    severe: 10
+    critical: 12
+    urgent: 10
+    dangerous: 10
+    alert: 8
+
+# Time Period Definitions
+time_periods:
+  # Map time period names to durations
+  recent:
+    duration: "1h"
+    description: "Last 1 hour"
+  today:
+    duration: "24h" 
+    description: "Last 24 hours"
+  yesterday:
+    duration: "48h"
+    start_offset: "24h"
+    description: "Previous 24 hour period"
+  week:
+    duration: "7d"
+    description: "Last 7 days"
+  month:
+    duration: "30d"
+    description: "Last 30 days"
+  
+  # Default time period if not specified
+  default: "recent"
+
+# Rule Type Mappings
+rule_types:
+  # Map rule type names to keywords for detection
+  authentication:
+    keywords:
+      - "login"
+      - "auth"
+      - "authentication"
+      - "user"
+      - "password"
+      - "credential" 
+      - "logon"
+      - "signin"
+      - "failed"
+      - "success"
+    aliases:
+      - "auth"
+      - "login"
+      - "user"
+    description: "User authentication and login events"
+  
+  web:
+    keywords:
+      - "web"
+      - "http"
+      - "https"
+      - "server"
+      - "apache"
+      - "nginx"
+      - "access"
+      - "denied"
+      - "403"
+      - "404"
+      - "500"
+      - "error"
+    aliases:
+      - "http"
+      - "https"
+      - "webserver"
+    description: "Web server and HTTP-related events"
+  
+  firewall:
+    keywords:
+      - "firewall"
+      - "iptables"
+      - "connection"
+      - "blocked"
+      - "denied"
+      - "port"
+      - "network"
+      - "traffic"
+    aliases:
+      - "network"
+      - "iptables"
+    description: "Firewall and network security events"
+  
+  malware:
+    keywords:
+      - "malware"
+      - "virus"
+      - "trojan"
+      - "worm"
+      - "threat"
+      - "infected"
+      - "detection"
+      - "antivirus"
+    aliases:
+      - "virus"
+      - "threat"
+    description: "Malware detection and threat events"
+  
+  integrity:
+    keywords:
+      - "integrity"
+      - "checksum"
+      - "changed"
+      - "modified"
+      - "file"
+      - "hash"
+      - "validation"
+    aliases:
+      - "file"
+      - "checksum"
+    description: "File integrity monitoring events"
+
+# Field Mappings (Wazuh to Elasticsearch)
+field_mappings:
+  # Map internal rule fields to Elasticsearch index fields
+  rule_id: "rule.id"
+  rule_description: "rule.description"
+  rule_level: "rule.level"
+  rule_type: "rule.groups"
+  timestamp: "@timestamp"
+  agent_id: "agent.id"
+  agent_name: "agent.name"
+  log_source: "input.type"
+  full_log: "full_log"
+  decoded_fields: "decoder"
+  location: "location"
+  
+  # Search fields for different query types
+  search_fields:
+    description: ["rule.description", "full_log"]
+    content: ["full_log", "decoder.program", "decoder.srcuser"]
+    metadata: ["rule.groups", "location", "agent.name"]
+
+# Query Processing Settings
+query_processing:
+  # Stop words to filter out during keyword extraction
+  stop_words:
+    - "show"
+    - "find"
+    - "get"
+    - "list"
+    - "display"
+    - "give"
+    - "tell"
+    - "all"
+    - "any"
+    - "some"
+    - "the"
+    - "and"
+    - "or"
+    - "but"
+    - "with"
+    - "from"
+    - "about"
+    - "that"
+    - "have"
+    - "are"
+    - "was"
+    - "were"
+    - "me"
+    - "my"
+    - "what"
+    - "where" 
+    - "when"
+    - "how"
+    - "why"
+    - "who"
+    - "which"
+  
+  # Minimum keyword length
+  min_keyword_length: 3
+  
+  # Maximum results to return
+  max_results: 100
+  default_results: 50
+  
+  # Query validation settings
+  min_query_length: 3
+  max_query_length: 500
+
+# NLP Settings
+nlp:
+  # Minimum confidence score for type detection
+  type_detection_threshold: 2
+  
+  # Keyword scoring weights
+  scoring:
+    exact_match: 3
+    partial_match: 1
+    
+  # Pattern matching settings
+  patterns:
+    level_explicit: "\\blevel\\s*[>=<]+\\s*(\\d+)"
+    number_extraction: "\\b(\\d+)\\b"
+    time_relative: "\\b(last|past|previous)\\s+(\\w+)"
+
+# File Settings
+files:
+  # Default rules file
+  default_rules: "rules.json"
+  
+  # Configuration file locations
+  config_paths:
+    - "config.yaml"
+    - "~/.wazuh-nlp/config.yaml"
+    - "/etc/wazuh-nlp/config.yaml"
+  
+  # Log file settings
+  log_file: null  # null means log to console
+  log_rotation: true
+  max_log_size: "10MB"
+  log_backup_count: 5
+
+# Elasticsearch Settings (if applicable)
+elasticsearch:
+  enabled: false
+  hosts:
+    - "localhost:9200"
+  index_pattern: "wazuh-alerts-*"
+  timeout: 30
+  max_retries: 3
+  
+  # Authentication (use environment variables)
+  username: null  # Set via WAZUH_ES_USERNAME
+  password: null  # Set via WAZUH_ES_PASSWORD
+  
+  # SSL settings
+  use_ssl: false
+  verify_certs: true
+  ca_certs: null
+
+# Environment Variable Overrides
+# These settings can be overridden using environment variables
+env_overrides:
+  # Format: config_path: ENV_VAR_NAME
+  "app.debug": "WAZUH_DEBUG"
+  "app.log_level": "WAZUH_LOG_LEVEL"
+  "files.default_rules": "WAZUH_RULES_FILE"
+  "files.log_file": "WAZUH_LOG_FILE"
+  "elasticsearch.enabled": "WAZUH_ES_ENABLED"
+  "elasticsearch.hosts": "WAZUH_ES_HOSTS"
+  "elasticsearch.username": "WAZUH_ES_USERNAME"
+  "elasticsearch.password": "WAZUH_ES_PASSWORD"
+  "elasticsearch.index_pattern": "WAZUH_ES_INDEX"
+
+# Feature Flags
+features:
+  # Enable/disable various system features
+  interactive_mode: true
+  query_suggestions: true
+  query_history: true
+  time_parsing: true
+  elasticsearch_integration: false
+  advanced_nlp: false  # Requires additional dependencies
+
+# Performance Settings
+performance:
+  # Caching settings
+  cache_rules: true
+  cache_ttl: 3600  # seconds
+  
+  # Processing limits
+  max_concurrent_queries: 10
+  query_timeout: 30  # seconds
+  
+  # Memory limits
+  max_memory_usage: "512MB"

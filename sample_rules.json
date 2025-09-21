@@ -1,0 +1,29 @@
+{
+  "rules": [
+    {"id": 5503, "description": "User login failed", "type": "authentication", "level": 5},
+    {"id": 40101, "description": "Multiple authentication failures detected", "type": "authentication", "level": 10},
+    {"id": 40102, "description": "Successful user login event", "type": "authentication", "level": 3},
+    {"id": 40103, "description": "Password change attempt", "type": "authentication", "level": 6},
+
+    {"id": 1001, "description": "System boot completed", "type": "system", "level": 2},
+    {"id": 1002, "description": "Service restarted on host", "type": "system", "level": 4},
+    {"id": 1003, "description": "Kernel error detected", "type": "system", "level": 12},
+    {"id": 1010, "description": "High CPU usage detected", "type": "system", "level": 5},
+
+    {"id": 2001, "description": "Privilege escalation attempt", "type": "security", "level": 13},
+    {"id": 2002, "description": "File permission changed on critical file", "type": "security", "level": 7},
+    {"id": 2003, "description": "Suspicious process execution observed", "type": "security", "level": 9},
+    {"id": 2010, "description": "Multiple failed sudo attempts", "type": "security", "level": 9},
+
+    {"id": 3001, "description": "CIS benchmark failed for SSH configuration", "type": "sca", "level": 8},
+    {"id": 3002, "description": "Weak password policy detected", "type": "sca", "level": 6},
+    {"id": 3003, "description": "Firewall disabled in configuration", "type": "sca", "level": 11},
+    {"id": 3010, "description": "Outdated OpenSSL version found", "type": "sca", "level": 7},
+
+    {"id": 4001, "description": "Suspicious binary found in /usr/bin", "type": "rootcheck", "level": 10},
+    {"id": 4002, "description": "Unexpected SUID file detected", "type": "rootcheck", "level": 14},
+    {"id": 4003, "description": "Known rootkit signatures detected", "type": "rootcheck", "level": 15},
+    {"id": 4020, "description": "Hidden directory found in /tmp", "type": "rootcheck", "level": 8}
+  ]
+}
+
