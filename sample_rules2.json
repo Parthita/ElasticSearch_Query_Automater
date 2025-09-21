@@ -1,0 +1,519 @@
+{
+  "dataset_info": {
+    "name": "Wazuh Security Rules and Natural Language Queries",
+    "version": "1.0",
+    "description": "Comprehensive dataset mapping Wazuh security rules to natural language queries for NLP training",
+    "total_rules": 10,
+    "categories": ["ssh_attacks", "web_attacks", "system_events", "file_integrity", "malware", "privilege_escalation", "reconnaissance"],
+    "mitre_attack_techniques": ["T1110.001", "T1190", "T1055", "T1565.001", "T1566", "T1091", "T1068", "T1595.001", "T1110", "T1548.003"]
+  },
+  "rules_and_queries": [
+    {
+      "rule_id": "100001",
+      "rule_name": "SSH Brute Force Detection",
+      "rule_level": 10,
+      "category": "ssh_attacks",
+      "mitre_technique": "T1110.001",
+      "rule_xml": "<rule id=\"100001\" level=\"10\">\n  <if_matched_sid>5716</if_matched_sid>\n  <same_source_ip />\n  <description>Multiple SSH authentication failures from same IP</description>\n  <mitre>\n    <id>T1110.001</id>\n  </mitre>\n  <group>authentication_failures,ssh_brute_force</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server sshd[1234]: Failed password for invalid user hacker1 from 10.0.0.11 port 3001 ssh2",
+        "Sep 21 06:24:16 server sshd[1235]: Failed password for root from 192.168.100.51 port 4001 ssh2",
+        "Sep 21 06:24:17 server sshd[1236]: Failed password for admin from 203.0.113.45 port 2222 ssh2"
+      ],
+      "natural_language_queries": [
+        "Show me SSH brute force attacks",
+        "Find failed SSH login attempts from the same IP",
+        "Display authentication failures for SSH connections",
+        "What SSH attacks happened today?",
+        "Show me repeated failed SSH passwords",
+        "Find brute force attempts on SSH service",
+        "Display multiple login failures from same source",
+        "Show SSH security incidents",
+        "Find unauthorized SSH access attempts",
+        "What are the failed SSH authentications?",
+        "Show me SSH intrusion attempts",
+        "Display repeated SSH login failures",
+        "Find SSH password guessing attacks",
+        "Show suspicious SSH activity",
+        "What SSH attacks are being detected?"
+      ],
+      "alert_fields": {
+        "source_ip": "string",
+        "failed_attempts": "integer",
+        "username": "string",
+        "port": "integer",
+        "timestamp": "datetime"
+      }
+    },
+    {
+      "rule_id": "100002",
+      "rule_name": "Web Application Attack Detection",
+      "rule_level": 12,
+      "category": "web_attacks",
+      "mitre_technique": "T1190",
+      "rule_xml": "<rule id=\"100002\" level=\"12\">\n  <if_group>web</if_group>\n  <url>/../../../etc/passwd|/phpMyAdmin/|admin-ajax.php|' OR '1'='1</url>\n  <description>Web application attack detected</description>\n  <mitre>\n    <id>T1190</id>\n  </mitre>\n  <group>web_attack,exploit_attempt</group>\n</rule>",
+      "log_samples": [
+        "192.168.1.100 - - [21/Sep/2025:06:24:15 +0000] \"GET /../../../etc/passwd HTTP/1.1\" 404 1234",
+        "10.0.0.50 - - [21/Sep/2025:06:24:16 +0000] \"GET /phpMyAdmin/index.php HTTP/1.1\" 200 5678",
+        "203.0.113.45 - - [21/Sep/2025:06:24:17 +0000] \"POST /login.php' OR '1'='1 HTTP/1.1\" 500 891"
+      ],
+      "natural_language_queries": [
+        "Show me web application attacks",
+        "Find SQL injection attempts",
+        "Display directory traversal attacks",
+        "What web vulnerabilities are being exploited?",
+        "Show me malicious web requests",
+        "Find path traversal attempts",
+        "Display web application exploits",
+        "Show suspicious web traffic",
+        "Find injection attacks on web services",
+        "What are the web security incidents?",
+        "Show me attempts to access sensitive files",
+        "Display web-based intrusion attempts",
+        "Find attempts to bypass web authentication",
+        "Show malicious URL requests",
+        "What web attacks happened recently?"
+      ],
+      "alert_fields": {
+        "source_ip": "string",
+        "url": "string",
+        "http_method": "string",
+        "status_code": "integer",
+        "attack_type": "string"
+      }
+    },
+    {
+      "rule_id": "100003",
+      "rule_name": "Suspicious Process Termination",
+      "rule_level": 8,
+      "category": "system_events",
+      "mitre_technique": "T1055",
+      "rule_xml": "<rule id=\"100003\" level=\"8\">\n  <decoded_as>kernel</decoded_as>\n  <match>suspicious_process</match>\n  <description>Suspicious process terminated unexpectedly</description>\n  <mitre>\n    <id>T1055</id>\n  </mitre>\n  <group>process_termination,suspicious_activity</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server kernel: Process suspicious_process1 (PID 1001) terminated unexpectedly",
+        "Sep 21 06:24:16 server kernel: Process suspicious_process2 (PID 1002) terminated unexpectedly",
+        "Sep 21 06:24:17 server kernel: Process suspicious_process3 (PID 1003) terminated unexpectedly"
+      ],
+      "natural_language_queries": [
+        "Show me suspicious process activities",
+        "Find processes that terminated unexpectedly",
+        "Display abnormal process terminations",
+        "What suspicious processes are running?",
+        "Show me process injection attempts",
+        "Find unusual process behavior",
+        "Display process anomalies",
+        "Show processes that crashed suspiciously",
+        "Find malicious process activities",
+        "What are the suspicious system processes?",
+        "Show me unexpected process exits",
+        "Display process security incidents",
+        "Find processes with suspicious names",
+        "Show abnormal process terminations",
+        "What process injection attacks occurred?"
+      ],
+      "alert_fields": {
+        "process_name": "string",
+        "pid": "integer",
+        "termination_reason": "string",
+        "parent_process": "string",
+        "user": "string"
+      }
+    },
+    {
+      "rule_id": "100004",
+      "rule_name": "File Integrity Violation",
+      "rule_level": 9,
+      "category": "file_integrity",
+      "mitre_technique": "T1565.001",
+      "rule_xml": "<rule id=\"100004\" level=\"9\">\n  <program_name>ossec</program_name>\n  <match>File '/etc/passwd' was modified|permissions changed</match>\n  <description>Critical system file integrity violation</description>\n  <mitre>\n    <id>T1565.001</id>\n  </mitre>\n  <group>file_integrity,system_file_change</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server ossec: File '/etc/passwd' was modified. Previous checksum: 'abc123' Current checksum: 'def456'",
+        "Sep 21 06:24:16 server ossec: File '/bin/sh' permissions changed from 755 to 777",
+        "Sep 21 06:24:17 server ossec: File '/etc/shadow' was modified. Previous checksum: 'xyz789' Current checksum: 'uvw012'"
+      ],
+      "natural_language_queries": [
+        "Show me file integrity violations",
+        "Find modified system files",
+        "Display file permission changes",
+        "What critical files were modified?",
+        "Show me unauthorized file changes",
+        "Find files with changed checksums",
+        "Display system file modifications",
+        "Show file integrity alerts",
+        "Find tampered system files",
+        "What are the file integrity incidents?",
+        "Show me changes to sensitive files",
+        "Display file modification alerts",
+        "Find unauthorized file access",
+        "Show files with permission changes",
+        "What file integrity violations occurred?"
+      ],
+      "alert_fields": {
+        "file_path": "string",
+        "previous_checksum": "string",
+        "current_checksum": "string",
+        "permission_change": "string",
+        "modification_type": "string"
+      }
+    },
+    {
+      "rule_id": "100005",
+      "rule_name": "Malware Detection",
+      "rule_level": 15,
+      "category": "malware",
+      "mitre_technique": "T1566",
+      "rule_xml": "<rule id=\"100005\" level=\"15\">\n  <program_name>clamd</program_name>\n  <match>FOUND:</match>\n  <description>Malware detected by antivirus</description>\n  <mitre>\n    <id>T1566</id>\n  </mitre>\n  <group>malware,virus_detected</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server clamd[5678]: FOUND: Trojan.Generic.123456 in /tmp/suspicious_file.exe",
+        "Sep 21 06:24:16 server clamd[5679]: FOUND: Worm.Win32.Conficker in /home/user/downloads/malware.pdf",
+        "Sep 21 06:24:17 server clamd[5680]: FOUND: Backdoor.Linux.Mirai in /var/www/html/upload/backdoor.php"
+      ],
+      "natural_language_queries": [
+        "Show me malware detections",
+        "Find virus infections",
+        "Display antivirus alerts",
+        "What malware was detected?",
+        "Show me trojan detections",
+        "Find infected files",
+        "Display malware scan results",
+        "Show virus scan alerts",
+        "Find malicious files",
+        "What are the malware incidents?",
+        "Show me backdoor detections",
+        "Display worm infections",
+        "Find ransomware alerts",
+        "Show malware quarantine events",
+        "What viruses were found?"
+      ],
+      "alert_fields": {
+        "malware_name": "string",
+        "file_path": "string",
+        "detection_engine": "string",
+        "threat_type": "string",
+        "quarantine_status": "string"
+      }
+    },
+    {
+      "rule_id": "100006",
+      "rule_name": "USB Device Detection",
+      "rule_level": 5,
+      "category": "system_events",
+      "mitre_technique": "T1091",
+      "rule_xml": "<rule id=\"100006\" level=\"5\">\n  <program_name>kernel</program_name>\n  <match>USB Mass Storage device detected</match>\n  <description>USB storage device connected</description>\n  <mitre>\n    <id>T1091</id>\n  </mitre>\n  <group>usb_device,removable_media</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server kernel: USB Mass Storage device detected: Vendor: Unknown, Product: USB Device",
+        "Sep 21 06:24:16 server kernel: USB Mass Storage device detected: Vendor: SanDisk, Product: Cruzer Blade",
+        "Sep 21 06:24:17 server kernel: USB Mass Storage device detected: Vendor: Kingston, Product: DataTraveler"
+      ],
+      "natural_language_queries": [
+        "Show me USB device connections",
+        "Find removable media usage",
+        "Display USB storage devices",
+        "What USB devices were connected?",
+        "Show me external device connections",
+        "Find USB mass storage events",
+        "Display removable storage alerts",
+        "Show USB device activity",
+        "Find external storage connections",
+        "What are the USB device events?",
+        "Show me portable device connections",
+        "Display USB insertion events",
+        "Find removable disk activity",
+        "Show external media usage",
+        "What USB devices were plugged in?"
+      ],
+      "alert_fields": {
+        "device_vendor": "string",
+        "device_product": "string",
+        "device_id": "string",
+        "mount_point": "string",
+        "connection_time": "datetime"
+      }
+    },
+    {
+      "rule_id": "100007",
+      "rule_name": "Privilege Escalation Attempt",
+      "rule_level": 11,
+      "category": "privilege_escalation",
+      "mitre_technique": "T1068",
+      "rule_xml": "<rule id=\"100007\" level=\"11\">\n  <program_name>sudo</program_name>\n  <match>incorrect password attempts</match>\n  <description>Multiple failed privilege escalation attempts</description>\n  <mitre>\n    <id>T1068</id>\n  </mitre>\n  <group>privilege_escalation,authentication_failures</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server sudo: user1 : 3 incorrect password attempts ; TTY=pts/0 ; PWD=/home/user1 ; USER=root ; COMMAND=/bin/cat /etc/shadow",
+        "Sep 21 06:24:16 server sudo: user2 : 3 incorrect password attempts ; TTY=pts/1 ; PWD=/home/user2 ; USER=root ; COMMAND=/usr/bin/passwd root",
+        "Sep 21 06:24:17 server sudo: user3 : 3 incorrect password attempts ; TTY=pts/2 ; PWD=/home/user3 ; USER=root ; COMMAND=/bin/su -"
+      ],
+      "natural_language_queries": [
+        "Show me privilege escalation attempts",
+        "Find failed sudo attempts",
+        "Display unauthorized privilege requests",
+        "What privilege escalation attacks occurred?",
+        "Show me failed root access attempts",
+        "Find sudo authentication failures",
+        "Display elevation of privilege attempts",
+        "Show unauthorized admin access",
+        "Find failed superuser attempts",
+        "What are the privilege escalation incidents?",
+        "Show me attempts to become root",
+        "Display failed administrative commands",
+        "Find unauthorized privilege usage",
+        "Show sudo security violations",
+        "What privilege abuse attempts happened?"
+      ],
+      "alert_fields": {
+        "username": "string",
+        "failed_attempts": "integer",
+        "tty": "string",
+        "command": "string",
+        "target_user": "string"
+      }
+    },
+    {
+      "rule_id": "100008",
+      "rule_name": "Automated Security Tool Detection",
+      "rule_level": 10,
+      "category": "reconnaissance",
+      "mitre_technique": "T1595.001",
+      "rule_xml": "<rule id=\"100008\" level=\"10\">\n  <if_group>web</if_group>\n  <user_agent>Nikto|sqlmap|python-requests</user_agent>\n  <description>Automated security tool detected</description>\n  <mitre>\n    <id>T1595.001</id>\n  </mitre>\n  <group>automated_scan,reconnaissance</group>\n</rule>",
+      "log_samples": [
+        "192.168.1.100 - - [21/Sep/2025:06:24:15 +0000] \"GET /admin/login.php HTTP/1.1\" 200 2345 \"Nikto/2.1.6\"",
+        "10.0.0.50 - - [21/Sep/2025:06:24:16 +0000] \"POST /search.php HTTP/1.1\" 200 3456 \"sqlmap/1.4.7#stable\"",
+        "203.0.113.45 - - [21/Sep/2025:06:24:17 +0000] \"GET /api/users HTTP/1.1\" 404 567 \"python-requests/2.25.1\""
+      ],
+      "natural_language_queries": [
+        "Show me automated security scans",
+        "Find reconnaissance activities",
+        "Display vulnerability scanning attempts",
+        "What automated tools are being used?",
+        "Show me security scanner traffic",
+        "Find penetration testing tools",
+        "Display automated attack tools",
+        "Show scanning tool activity",
+        "Find security assessment tools",
+        "What are the reconnaissance attempts?",
+        "Show me vulnerability scanner detections",
+        "Display automated scanning activities",
+        "Find security tool signatures",
+        "Show penetration testing attempts",
+        "What automated attacks were detected?"
+      ],
+      "alert_fields": {
+        "source_ip": "string",
+        "user_agent": "string",
+        "tool_name": "string",
+        "scan_type": "string",
+        "target_url": "string"
+      }
+    },
+    {
+      "rule_id": "100009",
+      "rule_name": "High Frequency Login Failures",
+      "rule_level": 8,
+      "category": "authentication",
+      "mitre_technique": "T1110",
+      "rule_xml": "<rule id=\"100009\" level=\"8\" frequency=\"5\" timeframe=\"120\">\n  <if_matched_sid>5503</if_matched_sid>\n  <same_source_ip />\n  <description>High frequency of login failures from same source</description>\n  <mitre>\n    <id>T1110</id>\n  </mitre>\n  <group>brute_force,authentication_failures</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server login[1234]: FAILED LOGIN 1 FROM 192.168.1.201 FOR user1, Authentication failure",
+        "Sep 21 06:24:16 server login[1235]: FAILED LOGIN 2 FROM 192.168.1.202 FOR user2, Authentication failure",
+        "Sep 21 06:24:17 server login[1236]: FAILED LOGIN 3 FROM 192.168.1.203 FOR user3, Authentication failure"
+      ],
+      "natural_language_queries": [
+        "Show me brute force attacks",
+        "Find high frequency login failures",
+        "Display repeated authentication failures",
+        "What credential stuffing attacks occurred?",
+        "Show me password spraying attempts",
+        "Find multiple login failures",
+        "Display authentication brute force",
+        "Show rapid login attempts",
+        "Find credential guessing attacks",
+        "What are the login abuse incidents?",
+        "Show me authentication bombardment",
+        "Display login flooding attempts",
+        "Find password brute force attacks",
+        "Show multiple authentication failures",
+        "What login attacks happened repeatedly?"
+      ],
+      "alert_fields": {
+        "source_ip": "string",
+        "failure_count": "integer",
+        "timeframe": "integer",
+        "usernames_attempted": "array",
+        "attack_pattern": "string"
+      }
+    },
+    {
+      "rule_id": "100010",
+      "rule_name": "Root Access Attempt",
+      "rule_level": 12,
+      "category": "privilege_escalation",
+      "mitre_technique": "T1548.003",
+      "rule_xml": "<rule id=\"100010\" level=\"12\">\n  <program_name>su</program_name>\n  <match>FAILED SU (to root)</match>\n  <description>Failed attempt to switch to root user</description>\n  <mitre>\n    <id>T1548.003</id>\n  </mitre>\n  <group>privilege_escalation,root_access</group>\n</rule>",
+      "log_samples": [
+        "Sep 21 06:24:15 server su[7890]: FAILED SU (to root) user1 on pts/0",
+        "Sep 21 06:24:16 server su[7891]: FAILED SU (to root) user2 on pts/1",
+        "Sep 21 06:24:17 server su[7892]: FAILED SU (to root) user3 on pts/2"
+      ],
+      "natural_language_queries": [
+        "Show me failed root access attempts",
+        "Find unauthorized su attempts",
+        "Display failed root escalation",
+        "What root access violations occurred?",
+        "Show me failed superuser switches",
+        "Find unauthorized root attempts",
+        "Display failed administrator access",
+        "Show su command failures",
+        "Find failed root login attempts",
+        "What are the root access incidents?",
+        "Show me unauthorized root escalation",
+        "Display failed root privilege attempts",
+        "Find su authentication failures",
+        "Show failed root user switches",
+        "What root access attacks happened?"
+      ],
+      "alert_fields": {
+        "username": "string",
+        "terminal": "string",
+        "attempt_time": "datetime",
+        "source_session": "string",
+        "failure_reason": "string"
+      }
+    }
+  ],
+  "nlp_training_data": {
+    "intent_classifications": [
+      {
+        "intent": "show_security_alerts",
+        "examples": [
+          "Show me security alerts",
+          "Display security incidents",
+          "What security events occurred?",
+          "Find security violations",
+          "Show me threats"
+        ]
+      },
+      {
+        "intent": "ssh_attacks",
+        "examples": [
+          "Show SSH attacks",
+          "Find SSH brute force",
+          "Display SSH failures",
+          "SSH security incidents",
+          "Failed SSH logins"
+        ]
+      },
+      {
+        "intent": "web_attacks",
+        "examples": [
+          "Show web attacks",
+          "Find SQL injection",
+          "Display web exploits",
+          "Web security incidents",
+          "Malicious web requests"
+        ]
+      },
+      {
+        "intent": "malware_detection",
+        "examples": [
+          "Show malware",
+          "Find viruses",
+          "Display malware detections",
+          "Antivirus alerts",
+          "Infected files"
+        ]
+      },
+      {
+        "intent": "privilege_escalation",
+        "examples": [
+          "Show privilege escalation",
+          "Find sudo failures",
+          "Display root access attempts",
+          "Privilege violations",
+          "Unauthorized elevation"
+        ]
+      },
+      {
+        "intent": "file_integrity",
+        "examples": [
+          "Show file changes",
+          "Find modified files",
+          "Display file integrity violations",
+          "System file changes",
+          "File modifications"
+        ]
+      }
+    ],
+    "entity_extractions": [
+      {
+        "entity": "time_range",
+        "examples": [
+          "today", "yesterday", "last hour", "past 24 hours", "this week", "last month"
+        ]
+      },
+      {
+        "entity": "severity_level",
+        "examples": [
+          "high", "medium", "low", "critical", "warning", "info"
+        ]
+      },
+      {
+        "entity": "ip_address",
+        "examples": [
+          "192.168.1.100", "10.0.0.50", "172.16.0.25", "203.0.113.45"
+        ]
+      },
+      {
+        "entity": "username",
+        "examples": [
+          "admin", "root", "user1", "guest", "administrator"
+        ]
+      }
+    ]
+  },
+  "sample_conversations": [
+    {
+      "user_query": "Show me all SSH attacks from today",
+      "intent": "ssh_attacks",
+      "entities": {"time_range": "today"},
+      "matching_rule_ids": ["100001", "100009"],
+      "expected_response": "Found SSH brute force attacks and high frequency login failures from today"
+    },
+    {
+      "user_query": "Find high severity web security incidents",
+      "intent": "web_attacks",
+      "entities": {"severity_level": "high"},
+      "matching_rule_ids": ["100002", "100008"],
+      "expected_response": "Displaying web application attacks and automated security tool detections"
+    },
+    {
+      "user_query": "What malware was detected in the last hour?",
+      "intent": "malware_detection",
+      "entities": {"time_range": "last hour"},
+      "matching_rule_ids": ["100005"],
+      "expected_response": "Showing malware detections from the past hour"
+    },
+    {
+      "user_query": "Show me failed privilege escalation attempts",
+      "intent": "privilege_escalation",
+      "entities": {},
+      "matching_rule_ids": ["100007", "100010"],
+      "expected_response": "Displaying privilege escalation attempts and root access failures"
+    }
+  ],
+  "query_patterns": {
+    "time_based": [
+      "Show me {alert_type} from {time_range}",
+      "Find {alert_type} in the {time_range}",
+      "What {alert_type} occurred {time_range}?"
+    ],
+    "severity_based": [
+      "Show me {severity} {alert_type}",
+      "Find {severity} security incidents",
+      "Display {severity} level alerts"
+    ],
+    "source_based": [
+      "Show me attacks from {ip_address}",
+      "Find incidents involving {username}",
+      "What happened on {hostname}?"
+    ]
+  }
+}
